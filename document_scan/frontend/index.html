@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Document Scan</title>
+    <style>
+        :root { color-scheme: dark; --bg: #0f1115; --panel: #181b22; --line: #2a2f3a; --text: #e7e9ee; --muted: #9aa3b2; --accent: #47d7ac; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+        main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; height: 100vh; }
+        @media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } .stage { height: 70vh; } }
+
+        /* Khung chứa video: video + overlay cùng nằm trong, overlay phủ kín. */
+        .stage { position: relative; overflow: hidden; background: #000; border-radius: 10px; min-height: 320px; }
+        .stage video { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .stage canvas.overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+        .status { position: absolute; left: 12px; bottom: 12px; padding: 6px 10px; border-radius: 6px;
+                  background: rgba(15, 17, 21, .85); border: 1px solid var(--line); font-size: 13px; }
+        .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .25s; }
+        .flash.on { opacity: .8; transition: none; }
+
+        aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+        .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+        label { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin: 6px 0; color: var(--muted); font-size: 13px; }
+        select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+        button.capture { width: 100%; padding: 14px; font-size: 17px; font-weight: 600; border: 0; border-radius: 8px;
+                         background: var(--accent); color: #05110d; cursor: pointer; }
+        button.capture:disabled { opacity: .5; cursor: wait; }
+        .shots { flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; align-content: start; }
+        .shot { position: relative; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+        .shot img { width: 100%; display: block; }
+        .shot span { position: absolute; left: 4px; bottom: 4px; font-size: 11px; background: rgba(0,0,0,.7); padding: 1px 5px; border-radius: 4px; }
+        .shot a { color: inherit; }
+    </style>
+</head>
+<body>
+<main>
+    <div class="stage" id="stage">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas class="overlay" id="overlay"></canvas>
+        <div class="flash" id="flash"></div>
+        <div class="status" id="status">Đang khởi động...</div>
+    </div>
+
+    <aside>
+        <button class="capture" id="captureBtn" disabled>Chụp ảnh</button>
+        <div class="panel">
+            <label>Hiển thị video
+                <select id="displayRotate">
+                    <option value="0">không xoay</option>
+                    <option value="90">xoay 90° (kiosk)</option>
+                </select>
+            </label>
+            <label>Xoay ảnh trước khi cắt
+                <select id="captureRotation">
+                    <option value="0">0°</option>
+                    <option value="-90">-90° (kiosk)</option>
+                    <option value="90">90°</option>
+                    <option value="180">180°</option>
+                </select>
+            </label>
+            <label>Hướng ảnh ra
+                <select id="orientation">
+                    <option value="portrait">ép khổ dọc</option>
+                    <option value="document">theo chiều trang in</option>
+                </select>
+            </label>
+        </div>
+        <div class="shots" id="shots"></div>
+    </aside>
+</main>
+
+<script type="module">
+    import { DocumentScanner, openCamera, layoutRotatedVideo } from './document-scan/index.js';
+
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams(location.search);
+    // Backend ở origin khác: ?api=http://192.168.1.10:8000/api/docscan
+    const apiBase = params.get('api') || '/api/docscan';
+
+    const scanner = new DocumentScanner({
+        apiBase,
+        video: $('video'),
+        overlay: $('overlay'),
+        statusEl: $('status'),
+        crop: { captureRotation: 0, orientation: 'portrait' },
+    });
+
+    window.docScanner = scanner;   // tiện gỡ lỗi từ Console
+
+    let undoRotate = null;
+    function applyDisplayRotate() {
+        undoRotate?.(); undoRotate = null;
+        const v = $('video');
+        v.removeAttribute('style');
+        if ($('displayRotate').value === '90') undoRotate = layoutRotatedVideo(v, 90);
+    }
+    $('displayRotate').onchange = applyDisplayRotate;
+    $('captureRotation').onchange = (e) => { scanner.opts.crop.captureRotation = Number(e.target.value); };
+    $('orientation').onchange = (e) => { scanner.opts.crop.orientation = e.target.value; };
+
+    $('captureBtn').onclick = async () => {
+        const btn = $('captureBtn');
+        btn.disabled = true;
+        $('flash').classList.add('on');
+        requestAnimationFrame(() => $('flash').classList.remove('on'));
+        let tile = null;
+        try {
+            const shot = await scanner.capture({
+                // Hiện ảnh xem trước ngay, thay bằng ảnh đã nắn khi xong.
+                onPreview: ({ blob }) => { tile = addTile(URL.createObjectURL(blob), 'đang xử lý...'); },
+            });
+            if (!shot) { $('status').textContent = 'Chưa phát hiện tài liệu, đặt tài liệu vào khung.'; tile?.remove(); return; }
+            const url = URL.createObjectURL(shot.blob);
+            const info = `${shot.width}×${shot.height} · ${shot.detection.refined ? 'refined' : (shot.detection.refine || 'model')}`;
+            if (tile) updateTile(tile, url, info); else addTile(url, info);
+        } catch (err) {
+            console.error(err);
+            tile?.remove();
+            $('status').textContent = 'Chụp lỗi: ' + err.message;
+        } finally {
+            btn.disabled = false;
+        }
+    };
+
+    function addTile(src, text) {
+        const el = document.createElement('div');
+        el.className = 'shot';
+        el.innerHTML = '<a target="_blank"><img alt="ảnh tài liệu"></a><span></span>';
+        updateTile(el, src, text);
+        $('shots').prepend(el);
+        return el;
+    }
+    function updateTile(el, src, text) {
+        el.querySelector('img').src = src;
+        el.querySelector('a').href = src;
+        el.querySelector('span').textContent = text;
+    }
+
+    try {
+        await openCamera($('video'), { width: 3840, height: 2160, frameRate: 10 });
+        await scanner.init();
+        scanner.start();
+        $('captureBtn').disabled = false;
+    } catch (err) {
+        console.error(err);
+        $('status').textContent = 'Lỗi khởi động: ' + err.message;
+    }
+</script>
+</body>
+</html>

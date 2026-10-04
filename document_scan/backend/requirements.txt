@@ -1,0 +1,9 @@
+# Lõi (bắt buộc): YOLO pose chạy bằng ONNX Runtime, không cần PyTorch / ultralytics.
+numpy
+opencv-python-headless
+onnxruntime
+
+# Chỉ cần khi dùng router FastAPI (document_scan/api.py) hoặc server.py.
+fastapi
+uvicorn[standard]
+python-multipart

@@ -1,0 +1,82 @@
+<!doctype html>
+<!--
+  Demo human_detection trong trinh duyet: mo camera, gui frame, ve khung nguoi.
+  1) scripts/run.sh --cors-origin '*'
+  2) Mo file nay bang Chrome/Edge (file:// hoac qua http server bat ky).
+-->
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Human detection demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 16px; background: #111; color: #eee; }
+  #stage { position: relative; display: inline-block; max-width: 100%; }
+  video, canvas { display: block; max-width: 100%; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #state { font-size: 28px; font-weight: 600; margin: 12px 0; }
+  .engaged { color: #5adc46; } .idle { color: #aaa; }
+  #log { font: 13px monospace; white-space: pre; max-height: 200px; overflow: auto; }
+  input { width: 260px; }
+</style>
+</head>
+<body>
+  <label>Server <input id="url" value="http://127.0.0.1:8765"></label>
+  <select id="camera"></select>
+  <button id="start">Bắt đầu</button> <button id="reset">Đặt lại</button>
+  <div id="state" class="idle">Chưa chạy</div>
+  <div id="stage"><video id="video" autoplay muted playsinline></video><canvas id="overlay"></canvas></div>
+  <div id="log"></div>
+<script type="module">
+import { HumanDetectionClient } from './humanDetectionClient.js';
+
+const $ = (id) => document.getElementById(id);
+const COLOR = { PRESENT: '#b4b4b4', ENGAGED: '#5adc46', ENGAGED_HOLD: '#dcdc46' };
+let client = null;
+
+async function listCameras() {
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    $('camera').innerHTML = devices.map((d, i) => `<option value="${d.deviceId}">${d.label || 'Camera ' + (i + 1)}</option>`).join('');
+}
+
+function log(line) {
+    $('log').textContent = `${new Date().toLocaleTimeString()}  ${line}\n` + $('log').textContent;
+}
+
+function draw(result) {
+    const canvas = $('overlay');
+    canvas.width = result.frame.width;
+    canvas.height = result.frame.height;
+    const ctx = canvas.getContext('2d');
+    ctx.lineWidth = 3;
+    ctx.font = '20px sans-serif';
+    for (const track of result.tracks) {
+        const [x1, y1, x2, y2] = track.bbox;
+        ctx.strokeStyle = ctx.fillStyle = COLOR[track.state] || '#ffb400';
+        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        ctx.fillText(`#${track.id} ${track.state} ${(track.bboxAreaRatio * 100).toFixed(0)}%`, x1 + 4, y1 + 22);
+    }
+    const engaged = result.activeTrackId !== null;
+    $('state').textContent = engaged ? `Có người dùng (#${result.activeTrackId})` : `Không có người dùng — ${result.tracks.length} người trong hình`;
+    $('state').className = engaged ? 'engaged' : 'idle';
+}
+
+$('start').onclick = async () => {
+    if (client) client.stop();
+    const deviceId = $('camera').value;
+    const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: 1920, height: 1080 },
+    });
+    $('video').srcObject = stream;
+    await listCameras();
+    client = new HumanDetectionClient($('url').value);
+    client.onResult = draw;
+    client.onEngaged = (e) => log(`USER_ENGAGED #${e.track_id}`);
+    client.onLeft = (e) => log(`USER_LEFT #${e.track_id} (${e.reason.join(', ')})`);
+    client.onError = (e) => log(`Lỗi: ${e.message}`);
+    client.start($('video'));
+};
+$('reset').onclick = async () => client && log(`reset: ${JSON.stringify((await client.reset()).events)}`);
+listCameras();
+</script>
+</body>
+</html>

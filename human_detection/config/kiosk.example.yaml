@@ -1,0 +1,57 @@
+version: 1
+camera:
+  source: 0
+  backend: auto
+  width: 1920
+  height: 1080
+  fps: 30
+  reconnect_ms: 1000
+  resolution_mode: native
+calibration:
+  # Replace using `kiosk-vision calibrate`; this placeholder is not physically calibrated.
+  homography:
+    - [0.0066666667, 0.0, -6.4]
+    - [0.0, -0.0066666667, 7.2]
+    - [0.0, 0.0, 1.0]
+  kiosk_xy_m: [0.0, 0.0]
+  detection_polygon_m: [[-3.0, 0.0], [3.0, 0.0], [3.0, 4.0], [-3.0, 4.0]]
+  approach_polygon_m: [[-2.0, 0.8], [2.0, 0.8], [2.0, 2.5], [-2.0, 2.5]]
+  interaction_polygon_m: [[-1.0, 0.0], [1.0, 0.0], [1.0, 1.2], [-1.0, 1.2]]
+detector:
+  model_path: models/yolox_nano.onnx
+  input_size: [416, 416]
+  confidence_threshold: 0.3
+  nms_threshold: 0.45
+  inference_interval_ms: 67
+  provider: cpu
+tracker:
+  track_threshold: 0.4
+  match_threshold: 0.8
+  track_buffer_frames: 30
+  max_history: 30
+head_pose:
+  enabled: false
+  face_detector_model_path: models/face_detection_yunet.onnx
+  model_path: models/face_landmarker.task
+  max_yaw_deg: 35
+  max_pitch_deg: 30
+  observation_ttl_ms: 500
+  process_interval_ms: 100
+engagement:
+  # A person starts using the kiosk at 18% of the frame and remains active down to 12%.
+  bbox_enter_ratio: 0.18
+  bbox_exit_ratio: 0.12
+  stable_track_ms: 500
+  dwell_ms: 600
+  hold_ms: 1200
+  lost_track_ms: 1000
+  switch_margin: 0.25
+  approaching_speed_mps: 0.12
+  departing_speed_mps: 0.15
+  max_lateral_speed_mps: 0.8
+  facing_threshold: 0.55
+service:
+  host: 127.0.0.1
+  port: 8765
+  diagnostic_media: false
+  log_level: INFO

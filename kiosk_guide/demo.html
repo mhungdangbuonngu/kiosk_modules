@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<!--
+    Trang demo DOC LAP cua kiosk_guide: khong can backend, khong can app quet giay to.
+    Mo bang mot web server tinh bat ky dat o thu muc nay, vd:
+        cd kiosk_guide && python3 -m http.server 8000   ->  http://localhost:8000/demo.html
+    Kich ban o day viet rieng (window.KIOSK_TOUR_CONFIG ngay trong trang) de thay
+    cach mot app khac tu khai bao buoc cua minh, thay cho tour-config.js.
+-->
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>kiosk_guide demo</title>
+    <link rel="stylesheet" href="guide.css">
+    <style>
+        body { margin: 0; font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
+        main { max-width: 760px; margin: 0 auto; padding: 48px 16px; display: grid; gap: 24px; }
+        .card { background: #1e293b; border-radius: 16px; padding: 24px; }
+        button.app { font-size: 18px; padding: 14px 24px; border-radius: 999px; border: 0; cursor: pointer; }
+        #order-btn { background: #ef4444; color: #fff; }
+        #count { font-size: 32px; font-weight: 700; }
+    </style>
+</head>
+<body data-kiosk-page="demo">
+    <main>
+        <h1>Ứng dụng mẫu</h1>
+        <div class="card" id="info-card">
+            <p>Đây là một phần tử bất kỳ trong app của bạn.</p>
+        </div>
+        <div class="card">
+            <p>Số lần đã bấm: <span id="count">0</span></p>
+            <button class="app" id="order-btn" type="button">Bấm vào đây</button>
+        </div>
+    </main>
+
+    <script>
+        var clicks = 0;
+        document.getElementById('order-btn').addEventListener('click', function () {
+            document.getElementById('count').textContent = ++clicks;
+        });
+
+        window.KIOSK_VOICE_CONFIG = { enabled: false };   // demo khong co mp3
+
+        window.KIOSK_TOUR_CONFIG = {
+            entryStep: 'hello',
+            steps: [
+                {
+                    id: 'hello', page: 'demo', title: 'Xin chào', progressLabel: '1/4',
+                    say: 'Đây là lớp hướng dẫn. Không có vùng sáng vì bước này không có target.',
+                    target: null,
+                    advance: { kind: 'next' }
+                },
+                {
+                    id: 'card', page: 'demo', title: 'Làm sáng phần tử', progressLabel: '2/4',
+                    say: 'Vùng sáng trỏ vào phần tử thật qua CSS selector.',
+                    target: '#info-card',
+                    advance: { kind: 'anywhere' }
+                },
+                {
+                    id: 'click', page: 'demo', title: 'Chờ bấm nút thật', progressLabel: '3/4',
+                    say: 'Hướng dẫn chờ người dùng bấm đúng nút đang sáng.',
+                    target: '#order-btn', radius: 999,
+                    advance: { kind: 'click', waitText: 'Đang chờ bấm nút...' }
+                },
+                {
+                    id: 'cond', page: 'demo', title: 'Chờ điều kiện', progressLabel: '4/4',
+                    say: 'Bấm thêm cho đủ 3 lần. Hướng dẫn tự đi tiếp khi điều kiện đúng.',
+                    target: '#order-btn', radius: 999, modal: false,
+                    advance: {
+                        kind: 'condition',
+                        check: function () { return clicks >= 3; },
+                        waitText: function () { return 'Đã bấm ' + clicks + '/3 lần'; },
+                        okText: 'Xong!'
+                    },
+                    nextId: '__end__'
+                }
+            ]
+        };
+    </script>
+    <script src="PresenceDetector.js"></script>
+    <script src="guide.js"></script>
+</body>
+</html>
