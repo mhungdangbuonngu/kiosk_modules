@@ -39,6 +39,11 @@ class DocumentScanService:
         self.imgsz_live = self.detector.effective_imgsz(cfg.imgsz_live or cfg.imgsz)
         self.warmup_ms = (self.detector.warmup(sorted({self.imgsz_live, self.imgsz_capture}))
                           if cfg.warmup else 0.0)
+        self._mask = (cv2.imread(cfg.mask_path(), cv2.IMREAD_GRAYSCALE)
+                      if cfg.refine_mask else None)
+        if cfg.refine_mask and self._mask is None:
+            print("[docscan] Không đọc được mask %s - refine chạy không có mask." % cfg.mask_path())
+        self._mask_by_size = {}
         # Model dùng chung -> mỗi lần một request (refine cũng nằm trong khoá cho gọn).
         self._lock = threading.Lock()
 
@@ -58,7 +63,20 @@ class DocumentScanService:
             "warmupMs": round(self.warmup_ms, 1),
             "refine": cfg.refine,
             "refineLive": cfg.refine_live,
+            "refineMask": self._mask is not None,
         }
+
+    def _mask_for(self, img: np.ndarray) -> np.ndarray | None:
+        """Mask khay co giãn theo đúng cỡ frame (nhớ theo cỡ để không resize lại)."""
+        if self._mask is None:
+            return None
+        h, w = img.shape[:2]
+        m = self._mask_by_size.get((w, h))
+        if m is None:
+            m = cv2.resize(self._mask, (w, h), interpolation=cv2.INTER_NEAREST)
+            m = np.where(m >= 128, 255, 0).astype(np.uint8)
+            self._mask_by_size[(w, h)] = m
+        return m
 
     # ---------- detect ----------
 
@@ -91,7 +109,7 @@ class DocumentScanService:
             raw_quad, refine_status = quad, None
             do_refine = cfg.refine_live if mode == "live" else cfg.refine
             if quad is not None and do_refine:
-                refined, info = quad_refine.refine_quad(small, quad)
+                refined, info = quad_refine.refine_quad(small, quad, mask=self._mask_for(small))
                 quad = np.asarray(refined, np.float32)
                 refine_status = info["status"]
             t_end = time.perf_counter()

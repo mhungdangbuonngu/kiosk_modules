@@ -5,6 +5,12 @@ Chép nguyên thuật toán từ dự án yolo_pose (src/refine.py), chỉ đổ
 hình học. Mọi bước đều có quyền phủ quyết: không chắc chắn thì giữ nguyên góc của
 model, nên refine không bao giờ làm ảnh cắt tệ hơn model.
 
+Riêng kiosk (không có bên yolo_pose): tham số `mask` — ảnh xám cùng cỡ frame,
+trắng = cửa kính khay, đen = ngoài khay (backend/refine_mask.png).
+  - chỉ tìm mép giấy trong vùng trắng;
+  - cạnh nào nằm phần lớn trong vùng đen (giấy tràn ra ngoài khay) thì kẻ theo
+    mép mask: ảnh cắt chỉ lấy phần giấy nằm trong khay (xem clip_to_mask).
+
 Bản gốc (docstring tiếng Anh) giữ nguyên ở dưới.
 """
 
@@ -34,7 +40,7 @@ Bản gốc (docstring tiếng Anh) giữ nguyên ở dưới.
 # altogether (an open notebook labelled as one sheet) all fall through to the
 # prediction unchanged.
 #
-#     from document_scan.refine import refine_quad
+#     from quad_refine import refine_quad
 #     quad, info = refine_quad(frame, quad)      # (4, 2) TL, TR, BR, BL
 
 
@@ -45,7 +51,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from .geometry import is_convex, polygon_area
+from .geometry import is_convex, order_clockwise, polygon_area
 
 
 @dataclass
@@ -90,7 +96,8 @@ def _gradients(image: np.ndarray, roi: tuple[int, int, int, int],
 
 def _side_points(gx: np.ndarray, gy: np.ndarray, origin: np.ndarray,
                  p0: np.ndarray, p1: np.ndarray, band: float,
-                 prm: RefineParams, dbg: dict | None = None) -> np.ndarray:
+                 prm: RefineParams, dbg: dict | None = None,
+                 mask: np.ndarray | None = None) -> np.ndarray:
     """Edge points found across the side p0->p1, in roi coordinates. (k, 2).
 
     `dbg`, when given, is filled with the intermediate arrays (for src.viz_refine).
@@ -116,6 +123,10 @@ def _side_points(gx: np.ndarray, gy: np.ndarray, origin: np.ndarray,
     cos_ok = np.cos(np.deg2rad(prm.orient_deg))
     strength = np.where((np.abs(across) / mag >= cos_ok) & (mag >= prm.min_grad),
                         np.abs(across), 0.0)
+    if mask is not None:    # kiosk: bỏ điểm dò rơi vào vùng đen của mask
+        inside = cv2.remap(mask, mx, my, cv2.INTER_NEAREST,
+                           borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        strength[inside == 0] = 0.0
     sign = np.sign(across)
     if dbg is not None:
         dbg.update(centres=centres + origin, normal=n, ss=ss, grid=pts + origin,
@@ -191,7 +202,21 @@ def _intersect(pa: np.ndarray, da: np.ndarray, pb: np.ndarray, db: np.ndarray):
 
 
 def refine_quad(image: np.ndarray, quad: np.ndarray, params: RefineParams | None = None,
-                debug: dict | None = None) -> tuple[np.ndarray, dict]:
+                debug: dict | None = None,
+                mask: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
+    """Refine (chỉ trong vùng trắng của mask) rồi kẻ cạnh tràn ra ngoài theo mép mask.
+
+    info["sides"][i] = "mask" khi cạnh i đã được thay bằng mép mask.
+    """
+    quad, info = _refine(image, quad, params, debug, mask)
+    if mask is not None:
+        quad, info["sides"] = clip_to_mask(quad, mask, info["sides"])
+    return quad, info
+
+
+def _refine(image: np.ndarray, quad: np.ndarray, params: RefineParams | None = None,
+            debug: dict | None = None,
+            mask: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
     """Return (refined quad, info). Falls back to the input quad whenever unsure.
 
     info["sides"] has one status per side (TL-TR, TR-BR, BR-BL, BL-TL):
@@ -234,7 +259,8 @@ def refine_quad(image: np.ndarray, quad: np.ndarray, params: RefineParams | None
 
         if sd is not None:
             sd.update(roi=(x0, y0, x1, y1), grad_mag=np.sqrt(gx * gx + gy * gy))
-        pts = _side_points(gx, gy, origin, p0, p1, band, prm, sd)
+        pts = _side_points(gx, gy, origin, p0, p1, band, prm, sd,
+                           None if mask is None else mask[y0:y1, x0:x1])
         fit = _fit_line(pts, tol, sd)
         if sd is not None:
             sd["points"] = pts + origin
@@ -292,3 +318,79 @@ def refine_quad(image: np.ndarray, quad: np.ndarray, params: RefineParams | None
 
     info["status"] = "refined"
     return out, info
+
+
+# ---------------------------------------------------------------- kiosk: mask khay
+
+def mask_window(mask: np.ndarray) -> np.ndarray | None:
+    """4 góc của vùng trắng lớn nhất trong mask (cửa kính khay), (4, 2) TL, TR, BR, BL."""
+    contours, _ = cv2.findContours((mask > 0).astype(np.uint8), cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    c = max(contours, key=cv2.contourArea)
+    peri = cv2.arcLength(c, True)
+    for eps in (0.01, 0.02, 0.03, 0.05, 0.08):
+        approx = cv2.approxPolyDP(c, eps * peri, True)
+        if len(approx) == 4:
+            return order_clockwise(approx.reshape(4, 2).astype(np.float64))
+    return None
+
+
+def _in_mask(mask: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    h, w = mask.shape[:2]
+    x = np.round(pts[:, 0]).astype(int)
+    y = np.round(pts[:, 1]).astype(int)
+    ok = (x >= 0) & (x < w) & (y >= 0) & (y < h)
+    out = np.zeros(len(pts), bool)
+    out[ok] = mask[y[ok], x[ok]] > 0
+    return out
+
+
+def clip_to_mask(quad: np.ndarray, mask: np.ndarray, sides: list) -> tuple[np.ndarray, list]:
+    """Cạnh nào phần lớn nằm ngoài vùng trắng thì thay bằng cạnh cửa kính gần nhất
+    cùng hướng, rồi tính lại 4 góc. Giấy nằm hẳn ngoài khay (tâm ở vùng đen) thì
+    giữ nguyên — không phải giấy trong khay."""
+    quad = np.asarray(quad, np.float64).reshape(4, 2)
+    if not _in_mask(mask, quad.mean(axis=0, keepdims=True))[0]:
+        return quad, sides
+    win = mask_window(mask)
+    if win is None:
+        return quad, sides
+
+    t = np.linspace(0.1, 0.9, 21)[:, None]
+    lines, new_sides = [], list(sides)
+    for i in range(4):
+        p0, p1 = quad[i], quad[(i + 1) % 4]
+        d = (p1 - p0) / max(np.linalg.norm(p1 - p0), 1e-9)
+        if _in_mask(mask, p0 + t * (p1 - p0)).mean() >= 0.5:
+            lines.append((p0, d))
+            continue
+        # cạnh cửa kính gần nhất, lệch hướng < 45 độ
+        mid = 0.5 * (p0 + p1)
+        best, best_dist = None, np.inf
+        for j in range(4):
+            w0, w1 = win[j], win[(j + 1) % 4]
+            wd = (w1 - w0) / max(np.linalg.norm(w1 - w0), 1e-9)
+            if abs(float(wd @ d)) < np.cos(np.deg2rad(45)):
+                continue
+            dist = abs(float((mid - w0) @ np.array([-wd[1], wd[0]])))
+            if dist < best_dist:
+                best, best_dist = (w0, wd if wd @ d >= 0 else -wd), dist
+        if best is None:
+            lines.append((p0, d))
+            continue
+        lines.append(best)
+        new_sides[i] = "mask"
+
+    if "mask" not in new_sides:
+        return quad, sides
+    out = np.empty_like(quad)
+    for i in range(4):
+        c = _intersect(*lines[(i - 1) % 4], *lines[i])
+        if c is None:
+            return quad, sides
+        out[i] = c
+    if not is_convex(out) or polygon_area(out) <= 0:
+        return quad, sides
+    return out, new_sides

@@ -24,11 +24,12 @@ DEFAULT_WEIGHTS = os.path.join("models", "docscan.onnx")
 class DocScanConfig:
     # File model YOLO pose (.onnx). Tương đối = tính từ thư mục backend/ của module.
     weights: str = DEFAULT_WEIGHTS
-    # Cỡ ảnh đưa vào mạng. Model kèm theo có input cố định 960 nên 2 giá trị này bị bỏ qua.
-    imgsz: int = 960
+    # Cỡ ảnh đưa vào mạng. Model kèm theo có input cố định 1280 nên 2 giá trị này bị bỏ qua.
+    imgsz: int = 1280
     imgsz_live: int = 640
-    # Độ tin cậy tối thiểu, ngưỡng IoU của NMS.
-    conf: float = 0.25
+    # Độ tin cậy tối thiểu, ngưỡng IoU của NMS. 0.65 để khay trống không hiện khung: với
+    # model kèm theo, khay trống tối đa ~0.56, giấy thật thấp nhất ~0.80 (đo 2026-10-06).
+    conf: float = 0.65
     iou: float = 0.7
     # Bỏ tứ giác nhỏ hơn tỉ lệ này của khung (chỉ loại mảnh suy biến; thẻ CCCD ~1% khung).
     min_area_frac: float = 0.002
@@ -39,6 +40,10 @@ class DocScanConfig:
     # Frontend vẽ khung bằng quad SAU refine nên mặc định bật cho cả live.
     refine: bool = True
     refine_live: bool = True
+    # Mask khay cho refine (PNG trắng/đen, cùng tỉ lệ frame camera): trắng = cửa kính khay,
+    # đen = ngoài khay. Chỉ tìm mép giấy trong vùng trắng; giấy tràn ra ngoài thì cạnh đó
+    # kẻ theo mép mask. Vẽ bằng ảnh nền của chính camera đang dùng. File không có = không mask.
+    refine_mask: str = "refine_mask.png"
     # Frame lớn hơn cỡ này bị thu nhỏ trước khi detect (YOLO tự letterbox về imgsz
     # nên không mất độ chính xác, chỉ đỡ tốn RAM / thời gian refine).
     max_frame_side: int = 1280
@@ -47,6 +52,9 @@ class DocScanConfig:
 
     def weights_path(self) -> str:
         return resolve_path(self.weights)
+
+    def mask_path(self) -> str:
+        return resolve_path(self.refine_mask)
 
     def to_dict(self) -> dict:
         return asdict(self)

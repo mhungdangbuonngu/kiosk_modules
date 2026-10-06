@@ -16,11 +16,13 @@ BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BACKEND)
 
 from document_scan import DocScanConfig, DocumentScanService, crop_document  # noqa: E402
+from document_scan.refine import refine_quad  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def svc():
-    return DocumentScanService(DocScanConfig.load(onnx_threads=4))
+    # Ảnh tổng hợp không phải camera kiosk -> tắt mask khay.
+    return DocumentScanService(DocScanConfig.load(onnx_threads=4, refine_mask=""))
 
 
 def synthetic_page():
@@ -43,6 +45,38 @@ def test_weights_path_is_relative_to_module():
     assert os.path.exists(cfg.weights_path())
 
 
+def test_mask_file_is_relative_to_module():
+    cfg = DocScanConfig()
+    assert cfg.mask_path() == os.path.join(BACKEND, "refine_mask.png")
+    assert cv2.imread(cfg.mask_path(), cv2.IMREAD_GRAYSCALE) is not None
+
+
+def _tray_scene(paper):
+    """Khung đen, cửa kính xám (= vùng trắng của mask), tờ giấy trắng."""
+    win = np.int32([[220, 0], [824, 0], [824, 465], [220, 465]])
+    mask = np.zeros((540, 960), np.uint8)
+    cv2.fillPoly(mask, [win], 255)
+    img = np.full((540, 960, 3), 40, np.uint8)
+    cv2.fillPoly(img, [win], (140, 140, 140))
+    cv2.fillPoly(img, [np.int32(paper)], (235, 235, 235))
+    return img, mask
+
+
+def test_mask_clips_paper_overflowing_tray():
+    paper = np.float64([[150, 100], [600, 100], [600, 400], [150, 400]])   # tràn qua mép trái
+    img, mask = _tray_scene(paper)
+    quad, info = refine_quad(img, paper + [[6, -5], [-4, 6], [5, 4], [-6, -3]], mask=mask)
+    assert info["sides"][3] == "mask" and np.abs(quad[[0, 3], 0] - 220).max() < 1.5
+    assert np.abs(quad[1:3] - paper[1:3]).max() < 2      # các cạnh trong khay vẫn refine
+
+
+def test_mask_keeps_paper_inside_tray():
+    paper = np.float64([[300, 80], [700, 90], [690, 400], [310, 390]])
+    img, mask = _tray_scene(paper)
+    quad, info = refine_quad(img, paper + [5, -4], mask=mask)
+    assert "mask" not in info["sides"] and np.abs(quad - paper).max() < 2
+
+
 def test_config_camelcase_and_env(monkeypatch):
     monkeypatch.setenv("DOCSCAN_REFINE_LIVE", "false")
     cfg = DocScanConfig.load(conf=0.4)
@@ -52,7 +86,7 @@ def test_config_camelcase_and_env(monkeypatch):
 
 def test_status(svc):
     s = svc.status()
-    assert s["ready"] and s["imgsz"] == 960 and s["refineLive"] is True
+    assert s["ready"] and s["imgsz"] == 1280 and s["refineLive"] is True
 
 
 def test_empty_frame(svc):
