@@ -6,7 +6,7 @@ Module quét tài liệu từ camera, tách từ kiosk: tìm 4 góc tài liệu 
 ```
 document_scan/
 ├── backend/                       Python — nhận ảnh, trả 4 góc (và cắt ảnh nếu cần)
-│   ├── models/docscan.onnx                 model YOLO pose (input cố định 1280×1280)
+│   ├── models/docscan.onnx                 model YOLO pose (input cố định 960×960)
 │   ├── refine_mask.png            mask khay của camera kiosk (trắng = cửa kính khay)
 │   ├── document_scan/             package Python
 │   │   ├── service.py             DocumentScanService: detect / scan / crop_document
@@ -101,14 +101,14 @@ không phải của ảnh — nên cắt theo đúng thứ tự này thì ảnh 
 | Khoá | Mặc định | Ý nghĩa |
 | --- | --- | --- |
 | `weights` | `models/docscan.onnx` | đường dẫn tương đối tính từ thư mục `backend/` của module, không phụ thuộc thư mục đang chạy |
-| `conf` | 0.65 | độ tin cậy tối thiểu. Đặt cao để khay trống không hiện khung: khay trống tối đa ~0.56, giấy thật thấp nhất ~0.80 |
+| `conf` | 0.65 | độ tin cậy tối thiểu (giấy thật thấp nhất ~0.73). Model kèm theo chấm khay trống tới ~0.77 nên ngưỡng này **không** chặn được khay trống |
 | `iou` | 0.7 | ngưỡng NMS |
 | `min_area_frac` | 0.002 | bỏ tứ giác nhỏ hơn tỉ lệ này của khung |
 | `onnx_threads` | 0 | 0 = tự chọn (½ số CPU, tối đa 8). **Đừng** để ONNX Runtime dùng hết nhân — máy nhiều nhân chậm gấp ~10 lần |
 | `refine` / `refine_live` | true / true | refine lúc chụp / lúc live |
 | `refine_mask` | `refine_mask.png` | mask khay (tương đối từ `backend/`); `""` hoặc file không có = không mask. Xem mục *Mask khay* |
 | `max_frame_side` | 1280 | frame lớn hơn bị thu nhỏ trước khi detect |
-| `imgsz` / `imgsz_live` | 1280 / 640 | bị bỏ qua với model kèm theo (input cố định 1280) |
+| `imgsz` / `imgsz_live` | 960 / 640 | bị bỏ qua với model kèm theo (input cố định 960) |
 
 Ví dụ: `DOCSCAN_ONNX_THREADS=4 DOCSCAN_CONF=0.3 python server.py`
 

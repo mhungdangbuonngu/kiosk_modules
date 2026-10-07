@@ -86,7 +86,7 @@ def test_config_camelcase_and_env(monkeypatch):
 
 def test_status(svc):
     s = svc.status()
-    assert s["ready"] and s["imgsz"] == 1280 and s["refineLive"] is True
+    assert s["ready"] and s["imgsz"] == 960 and s["refineLive"] is True
 
 
 def test_empty_frame(svc):

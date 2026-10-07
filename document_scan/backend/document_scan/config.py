@@ -24,11 +24,12 @@ DEFAULT_WEIGHTS = os.path.join("models", "docscan.onnx")
 class DocScanConfig:
     # File model YOLO pose (.onnx). Tương đối = tính từ thư mục backend/ của module.
     weights: str = DEFAULT_WEIGHTS
-    # Cỡ ảnh đưa vào mạng. Model kèm theo có input cố định 1280 nên 2 giá trị này bị bỏ qua.
-    imgsz: int = 1280
+    # Cỡ ảnh đưa vào mạng. Model kèm theo có input cố định 960 nên 2 giá trị này bị bỏ qua.
+    imgsz: int = 960
     imgsz_live: int = 640
-    # Độ tin cậy tối thiểu, ngưỡng IoU của NMS. 0.65 để khay trống không hiện khung: với
-    # model kèm theo, khay trống tối đa ~0.56, giấy thật thấp nhất ~0.80 (đo 2026-10-06).
+    # Độ tin cậy tối thiểu, ngưỡng IoU của NMS. Với model kèm theo, giấy thật thấp nhất
+    # ~0.73 (đo 2026-10-07). Lưu ý: khay trống có thể được chấm tới ~0.77 nên ngưỡng này
+    # KHÔNG chặn được khay trống — cần train lại có ảnh khay trống.
     conf: float = 0.65
     iou: float = 0.7
     # Bỏ tứ giác nhỏ hơn tỉ lệ này của khung (chỉ loại mảnh suy biến; thẻ CCCD ~1% khung).
